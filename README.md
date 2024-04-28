@@ -37,10 +37,6 @@ To run `hant`, follow these steps:
 
 
 3. Navigate to the directory where the repository was downloaded.
-```bash
-cd shan
-```
-
 ### Reproducing experimental results
 
 #### Observing the experimental results
