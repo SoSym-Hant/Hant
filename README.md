@@ -84,5 +84,5 @@ To visualize these experimental results, open these files using a web browser.
 ### Raw Data
 
 The raw data of the experimental results are available in the `data` directory.
-The execution time reports for the experiments can be accessed online through the following links: [experiment1](https://fm24-hant.github.io/Hant/experiment1) and [experiment2](https://fm24-hant.github.io/Hant/experiment2).
+The execution time reports for the experiments can be accessed online through the following links: [RQ1](https://sosym-hant.github.io/Hant/experiment1)and [RQ2](https://sosym-hant.github.io/Hant/experiment2).
 
