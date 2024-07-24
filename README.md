@@ -43,7 +43,7 @@ To run `hant`, follow these steps:
 
 - Reproduce RQ1 with the following command.
 ```bash
-stack run +RTS -N -- observe experiment1
+stack run +RTS -N -- parallel experiment1
 ```
 
 - Run the following command that measures the coverage of RQ1.
@@ -52,37 +52,23 @@ stack run +RTS -N -- observe experiment1
 stack run +RTS -N -- coverage experiment1
 ```
 
-- Reproduce the line plots in RQ1 with the following command.
-
-```bash
-stack run -- observe altitude-display
-stack run -- observe car-controller
-stack run -- observe learning-factory
-```
-
 - Reproduce RQ2 with the following command.
+
+To reproduce the results of `hant`:
 ```bash
-stack run +RTS -N -- observe experiment2
+stack run +RTS -N -- parallel experiment2
 ```
 
-
-
-#### Measuring the performance of `hant` with `criterion`
-
-- Run the following command that measures the testing time of the experiment 1.
+To reproduce the results of `s-hant`:
 ```bash
-stack run +RTS -N -- parallel experiment1 --output experiment1.html
-```
-- Run the following command that measures the testing time of the experiment2.
-```bash
-stack run +RTS -N -- parallel experiment2 --output experiment2.html
+stack run +RTS -N -- sequential experiment2
 ```
 
-Once you execute these two commands, `hant` will produce two HTML files named `experiment1.html` and `experiment2.html`,  depicting the experimental results.
-To visualize these experimental results, open these files using a web browser.
+To reproduce the results of `n-hant`
+```bash
+stack run +RTS -N -- nopruning experiment2
+```
 
 ### Raw Data
 
 The raw data of the experimental results are available in the `data` directory.
-The execution time reports for the experiments can be accessed online through the following links: [RQ1](https://sosym-hant.github.io/Hant/experiment1)and [RQ2](https://sosym-hant.github.io/Hant/experiment2).
-

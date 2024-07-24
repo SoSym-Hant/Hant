@@ -1,14 +1,15 @@
 module Hant.Analysis.ParallelVerification
-  ( parallelAnalyze,
+  ( Mode(..),
+    analyze,
     parallelAnalyzeLiteratureCase,
-    parallelAnalyzeSynthesizedCase,
+    analyzeSynthesizedCase,
   )
 where
 
 import Control.Concurrent (getNumCapabilities)
-import Control.Concurrent.Async (async)
+import Control.Concurrent.Async (async, Async, cancel, wait)
 import Control.Concurrent.STM (TQueue, atomically, newTQueueIO, readTQueue, writeTQueue)
-import Control.Monad (forever, replicateM_)
+import Control.Monad (forever, replicateM)
 import Data.Either (partitionEithers)
 import Data.List (isInfixOf)
 import Hant.Analysis.Guided (analyzeHanGuidedByTrace)
@@ -24,6 +25,10 @@ import Hant.Synthesis.Synthesizer qualified as Synth
 import Hant.Util (LiteratureCase (bound, name, path))
 import Text.Printf (printf)
 import Data.Time (getCurrentTime, diffUTCTime)
+import Control.Exception (try, SomeException)
+
+data Mode = Sequential | Parallel | NoPruning
+  deriving (Eq, Show)
 
 parallelAnalyzeLiteratureCase :: LiteratureCase -> IO ()
 parallelAnalyzeLiteratureCase c = do
@@ -31,32 +36,46 @@ parallelAnalyzeLiteratureCase c = do
   printCaseName (name c)
   sdOrAutomaton <- parseShan (path c)
   let diags = partitionEithers sdOrAutomaton
-  parallelAnalyze (bound c) diags
+  analyze (bound c) diags Parallel
   endTime <- getCurrentTime
   let diff = diffUTCTime endTime startTime
   putStrLn $ "Time consumption: " ++ show diff
 
-parallelAnalyzeSynthesizedCase :: SynthesizedCase -> IO ()
-parallelAnalyzeSynthesizedCase c = do
+analyzeSynthesizedCase :: SynthesizedCase -> Mode -> IO ()
+analyzeSynthesizedCase c m = do
   startTime <- getCurrentTime
   printCaseName (caseId c)
   let diags = diagrams c
   let b = Synth.bound c
-  parallelAnalyze b diags
+  analyze b diags m
   endTime <- getCurrentTime
   let diff = diffUTCTime endTime startTime
   putStrLn $ "Time consumption: " ++ show diff
 
-parallelAnalyze :: Bound -> Diagrams -> IO ()
-parallelAnalyze b (sds, han) = do
+analyze :: Bound -> Diagrams -> Mode -> IO ()
+analyze b (sds, han) m = do
   let validationRes = validateDiagrams (sds, han)
   case validationRes of
     [] ->
       let ts = concatMap traces sds
        in do
             printIsdStatistics b sds ts han
-            parallelAnalyzeHanGuidedByTraces b han ts
+            case m of
+              Sequential -> sequentialAnalyzeHanGuidedByTraces b han ts
+              Parallel -> parallelAnalyzeHanGuidedByTraces b han ts
+              NoPruning -> noPruningAnalyzeHanGuidedByTraces b han ts
     errorMsg -> print errorMsg
+
+sequentialAnalyzeHanGuidedByTraces ::
+  Bound ->
+  [Automaton] ->
+  [Trace] ->
+  IO ()
+sequentialAnalyzeHanGuidedByTraces b han ts = do
+  taskQueue <- newTQueueIO
+  checkResultQueue <- newTQueueIO
+  workers <- replicateM 1 $ async $ worker b han taskQueue checkResultQueue
+  sequentialInitialize ts taskQueue checkResultQueue workers
 
 parallelAnalyzeHanGuidedByTraces ::
   Bound ->
@@ -67,16 +86,55 @@ parallelAnalyzeHanGuidedByTraces b han ts = do
   taskQueue <- newTQueueIO
   checkResultQueue <- newTQueueIO
   capabilityCount <- getNumCapabilities
-  replicateM_ capabilityCount $ async $ worker b han taskQueue checkResultQueue
-  initialize ts taskQueue checkResultQueue
+  let num = if length ts < 10
+              then capabilityCount
+              else 1
+  workers <- replicateM num $ async $ worker b han taskQueue checkResultQueue
+  initializePruner ts taskQueue checkResultQueue workers
+
+noPruningAnalyzeHanGuidedByTraces ::
+  Bound ->
+  [Automaton] ->
+  [Trace] ->
+  IO ()
+noPruningAnalyzeHanGuidedByTraces b han ts = do
+  taskQueue <- newTQueueIO
+  checkResultQueue <- newTQueueIO
+  capabilityCount <- getNumCapabilities
+  mapM_ (atomically . writeTQueue taskQueue) ts
+  workers <- replicateM capabilityCount $ async $ worker b han taskQueue checkResultQueue
+  checker (length ts) 0 checkResultQueue workers
+
+checker ::
+  Int ->
+  Int ->
+  TQueue (Either [Message] String) ->
+  [Async ()] ->
+  IO ()
+checker total done resultQueue workers =
+  if total == done
+    then do
+      putStrLn "verified"
+      blank
+    else do
+      checkResult <- atomically $ readTQueue resultQueue
+      case checkResult of
+        Left _ -> checker total (done + 1) resultQueue workers
+        Right counterExample -> do
+          mapM_ cancel workers
+          mapM_ ((try :: IO a -> IO (Either SomeException a)) . wait) workers
+          putStrLn "Counter Example: "
+          putStrLn counterExample
+          blank
 
 pruner ::
   Int ->
   [Trace] ->
   TQueue Trace ->
   TQueue (Either [Message] String) ->
+  [Async ()] ->
   IO ()
-pruner processingTasks tasks taskQueue checkResultQueue = do
+pruner processingTasks tasks taskQueue checkResultQueue workers = do
   if processingTasks == 0
     then do
       putStrLn "verified"
@@ -96,23 +154,37 @@ pruner processingTasks tasks taskQueue checkResultQueue = do
                   then processingTasks - 1
                   else processingTasks
           mapM_ (atomically . writeTQueue taskQueue) (take 1 filtered)
-          pruner remaining (drop 1 filtered) taskQueue checkResultQueue
+          pruner remaining (drop 1 filtered) taskQueue checkResultQueue workers
         Right counterExample -> do
+          mapM_ cancel workers
+          mapM_ ((try :: IO a -> IO (Either SomeException a)) . wait) workers
           putStrLn "Counter Example: "
           putStrLn counterExample
           blank
 
-initialize ::
+initializePruner ::
   [Trace] ->
   TQueue Trace ->
   TQueue (Either [Message] String) ->
+  [Async ()] ->
   IO ()
-initialize tasks taskQueue checkResultQueue = do
-  capabilityCount <- getNumCapabilities
-  let initialTasks = take capabilityCount tasks
+initializePruner tasks taskQueue checkResultQueue workers = do
+  let initialTasks = take (length workers) tasks
   let initialTaskCount = length initialTasks
   mapM_ (atomically . writeTQueue taskQueue) initialTasks
-  pruner initialTaskCount (drop initialTaskCount tasks) taskQueue checkResultQueue
+  pruner initialTaskCount (drop initialTaskCount tasks) taskQueue checkResultQueue workers
+
+sequentialInitialize ::
+  [Trace] ->
+  TQueue Trace ->
+  TQueue (Either [Message] String) ->
+  [Async ()] ->
+  IO ()
+sequentialInitialize tasks taskQueue checkResultQueue workers = do
+  let initialTasks = take 1 tasks
+  let initialTaskCount = length initialTasks
+  mapM_ (atomically . writeTQueue taskQueue) initialTasks
+  pruner initialTaskCount (drop initialTaskCount tasks) taskQueue checkResultQueue workers
 
 worker ::
   Bound ->

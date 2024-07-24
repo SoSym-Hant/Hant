@@ -1,27 +1,16 @@
 module Task.Hant
-  ( runExperiment1,
-    runExperiment2,
-    parallelRunExperiment1,
-    parallelRunExperiment2,
-    runSingle1,
-    runSingle2,
-    parallelRunSingle1,
-    parallelRunSingle2,
-    observeExperiment1,
-    observeExperiment2,
+  ( parallelExperiment1,
+    parallelExperiment2,
+    sequentialExperiment2,
+    nopruningExperiment2,
     coverageExperiment1,
     coverageExperiment2,
-    altitudeDisplayTick,
-    carControllerTick,
-    learningFactoryTick,
   )
 where
 
-import Criterion.Main (Benchmark, bench, bgroup, defaultMain, nfIO)
-import Hant.Analysis.Guided (analyzeLiteratureCase, analyzeSynthesizedCase, tickLiteratureCase)
-import Hant.Analysis.ParallelVerification (parallelAnalyzeLiteratureCase, parallelAnalyzeSynthesizedCase)
+import Hant.Analysis.ParallelVerification (parallelAnalyzeLiteratureCase, analyzeSynthesizedCase, Mode (..))
 import Hant.Pretty (banner)
-import Hant.Synthesis.Synthesizer (SynthesisConfig (..), SynthesizedCase (caseId), synthesizeCases)
+import Hant.Synthesis.Synthesizer (SynthesisConfig (..), synthesizeCases)
 import Hant.Util (LiteratureCase (..))
 import System.FilePath ((</>))
 import Hant.Analysis.Coverage (coverageLiteratureCase, coverageSynthesizedCase)
@@ -117,99 +106,31 @@ literatureCaseNames =
     waterTanks
   ]
 
-benchLiteratureCase :: String -> Benchmark
-benchLiteratureCase s = bench s $ nfIO $ analyzeLiteratureCase $ yield s
-
-benchSynthesizedCase :: SynthesizedCase -> Benchmark
-benchSynthesizedCase sc = bench (caseId sc) $ nfIO $ analyzeSynthesizedCase sc
-
-parallelBenchLiteratureCase :: String -> Benchmark
-parallelBenchLiteratureCase s = bench s $ nfIO $ parallelAnalyzeLiteratureCase $ yield s
-
-parallelBenchSynthesizedCase :: SynthesizedCase -> Benchmark
-parallelBenchSynthesizedCase sc = bench (caseId sc) $ nfIO $ parallelAnalyzeSynthesizedCase sc
-
-benchmark1 :: [Benchmark]
-benchmark1 =
-  [ bgroup "experiment 1" (benchLiteratureCase <$> literatureCaseNames)
-  ]
-
-parallelBenchmark1 :: [Benchmark]
-parallelBenchmark1 =
-  [ bgroup
-      "experiment 1"
-      (parallelBenchLiteratureCase <$> literatureCaseNames)
-  ]
-
-benchmarkSingle1 :: [Benchmark]
-benchmarkSingle1 =
-  [ bgroup
-      "altitude display int"
-      [ benchLiteratureCase altitudeDisplayInt
-      ]
-  ]
-
-parallelBenchmarkSingle1 :: [Benchmark]
-parallelBenchmarkSingle1 =
-  [ bgroup
-      "altitude display int, checking in parallel"
-      [ parallelBenchLiteratureCase altitudeDisplay
-      ]
-  ]
-
-benchmark2 :: [Benchmark]
-benchmark2 =
-  [ bgroup "experiment 2" (benchSynthesizedCase <$> synthesizeCases synthesisConfig)
-  ]
-
-parallelBenchmark2 :: [Benchmark]
-parallelBenchmark2 =
-  [ bgroup "experiment 2" (parallelBenchSynthesizedCase <$> synthesizeCases synthesisConfig)
-  ]
-
-benchmarkSingle2 :: [Benchmark]
-benchmarkSingle2 =
-  [ bgroup "single synthesized case" (benchSynthesizedCase <$> take 1 (synthesizeCases synthesisConfig))
-  ]
-
-parallelBenchmarkSingle2 :: [Benchmark]
-parallelBenchmarkSingle2 =
-  [ bgroup "single synthesized case, checking in parallel" (parallelBenchSynthesizedCase <$> take 1 (synthesizeCases synthesisConfig))
-  ]
-
 banner1 :: IO ()
 banner1 = banner "|  experiment 1: literature cases  |"
 
 banner2 :: IO ()
 banner2 = banner "|  experiment 2: synthesized cases  |"
 
-runExperiment1 :: IO ()
-runExperiment1 = do
+parallelExperiment1 :: IO ()
+parallelExperiment1 = do
   banner1
-  defaultMain benchmark1
-
-runExperiment2 :: IO ()
-runExperiment2 = do
-  banner2
-  defaultMain benchmark2
-
-parallelRunExperiment1 :: IO ()
-parallelRunExperiment1 = do
-  banner1
-  defaultMain parallelBenchmark1
-
-parallelRunExperiment2 :: IO ()
-parallelRunExperiment2 = do
-  banner2
-  defaultMain parallelBenchmark2
-
-observeExperiment1 :: IO ()
-observeExperiment1 = do
   mapM_ parallelAnalyzeLiteratureCase (yield <$> literatureCaseNames)
 
-observeExperiment2 :: IO ()
-observeExperiment2 = do
-  mapM_ parallelAnalyzeSynthesizedCase (synthesizeCases synthesisConfig)
+parallelExperiment2 :: IO ()
+parallelExperiment2 = do
+  banner2
+  mapM_ (\c -> analyzeSynthesizedCase c Parallel) (synthesizeCases synthesisConfig)
+
+sequentialExperiment2 :: IO ()
+sequentialExperiment2 = do
+  banner2
+  mapM_ (\c -> analyzeSynthesizedCase c Sequential) (synthesizeCases synthesisConfig)
+
+nopruningExperiment2 :: IO ()
+nopruningExperiment2 = do
+  banner2
+  mapM_ (\c -> analyzeSynthesizedCase c NoPruning) (synthesizeCases synthesisConfig)
 
 coverageExperiment1 :: IO ()
 coverageExperiment1 = do
@@ -218,45 +139,3 @@ coverageExperiment1 = do
 coverageExperiment2 :: IO ()
 coverageExperiment2 = do
   mapM_ coverageSynthesizedCase (synthesizeCases synthesisConfig)
-
-tick :: String -> IO ()
-tick s = do
-  tickLiteratureCase $ yield s
-
-altitudeDisplayTick :: IO ()
-altitudeDisplayTick = tick altitudeDisplay
-
-carControllerTick :: IO ()
-carControllerTick = tick carController
-
-learningFactoryTick :: IO ()
-learningFactoryTick = tick learningFactory
-
-singleBanner :: String -> IO ()
-singleBanner s = banner ("|  single case: " ++ s ++ "  |")
-
-singleBanner1 :: IO ()
-singleBanner1 = singleBanner "altitude display int"
-
-singleBanner2 :: IO ()
-singleBanner2 = singleBanner "synthesized case"
-
-runSingle1 :: IO ()
-runSingle1 = do
-  singleBanner1
-  defaultMain benchmarkSingle1
-
-runSingle2 :: IO ()
-runSingle2 = do
-  singleBanner2
-  defaultMain benchmarkSingle2
-
-parallelRunSingle1 :: IO ()
-parallelRunSingle1 = do
-  singleBanner1
-  defaultMain parallelBenchmarkSingle1
-
-parallelRunSingle2 :: IO ()
-parallelRunSingle2 = do
-  singleBanner2
-  defaultMain parallelBenchmarkSingle2
